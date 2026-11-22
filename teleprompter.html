@@ -41,6 +41,8 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
 #reader::after{content:"";display:block;height:100%}
 #text{white-space:pre-wrap;text-align:center;font-weight:700;line-height:1.35;margin:0}
 #mark{position:absolute;left:0;top:calc(env(safe-area-inset-top,0px) + 42%);width:0;height:0;border-top:9px solid transparent;border-bottom:9px solid transparent;border-left:12px solid #ffb84d;transform:translateY(-4px)}
+#grip{position:absolute;left:0;right:0;bottom:-22px;height:44px;display:flex;align-items:center;justify-content:center;touch-action:none;cursor:ns-resize;z-index:2}
+#grip::before{content:"";width:64px;height:7px;border-radius:4px;background:#ffb84d;box-shadow:0 0 0 2px rgba(0,0,0,.45)}
 #bar{position:absolute;left:0;right:0;bottom:0;padding:14px 12px calc(14px + env(safe-area-inset-bottom,0px));display:flex;align-items:center;justify-content:space-between;gap:8px;background:linear-gradient(transparent,rgba(0,0,0,.7))}
 .ib{min-width:56px;height:52px;padding:0 12px;border-radius:26px;border:1px solid rgba(255,255,255,.35);background:rgba(20,24,28,.7);color:#f2f4f5;font-weight:700}
 #rec{width:68px;height:68px;border-radius:50%;border:4px solid #fff;background:transparent;display:grid;place-items:center;padding:0}
@@ -88,6 +90,7 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
   <div id="strip" role="button" aria-label="Tocar para pausar o reanudar el guion">
     <div id="reader"><p id="text"></p></div>
     <span id="mark"></span>
+    <div id="grip" role="separator" aria-label="Arrastrar para cambiar la altura de la franja"></div>
   </div>
   <div id="status" hidden></div>
   <div id="count" hidden></div>
@@ -176,6 +179,22 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
 
   $('strip').addEventListener('click',function(){ setPlaying(!playing); });
   $('play').addEventListener('click',function(){ setPlaying(!playing); });
+
+  var grip=$('grip'), dragging=false, dragY=0, dragP=0;
+  grip.addEventListener('click',function(e){ e.stopPropagation(); });
+  grip.addEventListener('pointerdown',function(e){
+    e.preventDefault(); e.stopPropagation(); dragging=true; dragY=e.clientY; dragP=stripH;
+    try{ grip.setPointerCapture(e.pointerId); }catch(x){}
+  });
+  grip.addEventListener('pointermove',function(e){
+    if(!dragging) return;
+    var h=$('stage').clientHeight||window.innerHeight||1;
+    stripH=Math.max(20,Math.min(60,Math.round(dragP+(e.clientY-dragY)/h*100)));
+    $('strip').style.height=stripH+'%';
+  });
+  function endDrag(){ if(!dragging) return; dragging=false; store.set('tp-strip',stripH); $('stripH').value=stripH; labels(); }
+  grip.addEventListener('pointerup',endDrag);
+  grip.addEventListener('pointercancel',endDrag);
   function flash(m){ var s=$('status'); if(rec&&rec.state!=='inactive')return; s.textContent=m; s.hidden=false; clearTimeout(flash.t); flash.t=setTimeout(function(){ if(!(rec&&rec.state!=='inactive')) s.hidden=true; },1200); }
   $('slower').addEventListener('click',function(){ speed=Math.max(10,speed-10); $('speed').value=speed; store.set('tp-speed',speed); labels(); flash('Velocidad '+speed); });
   $('faster').addEventListener('click',function(){ speed=Math.min(200,speed+10); $('speed').value=speed; store.set('tp-speed',speed); labels(); flash('Velocidad '+speed); });
