@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Teleprompter</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0f1418">
+<link rel="icon" type="image/png" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap">
 <style>
 :root{--bg:#f3f5f6;--panel:#fff;--text:#11181d;--muted:#5b6b75;--line:#d5dde2;--accent:#b86e00;--onaccent:#fff;--rec:#d92d2d;
@@ -24,6 +28,7 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
 .row{display:flex;align-items:center;gap:12px}
 .row input[type=range]{flex:1;accent-color:var(--accent)}
 .val{min-width:3.2em;text-align:right;color:var(--muted)}
+select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--text);font:inherit}
 .primary{width:100%;margin-top:22px;padding:16px;border:0;border-radius:12px;background:var(--accent);color:var(--onaccent);font-weight:700;font-size:18px}
 .msg{margin-top:14px;padding:12px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--line);color:var(--text)}
 /* Escenario de grabación */
@@ -61,6 +66,17 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
   <div class="row"><input id="speed" type="range" min="10" max="200" step="5"><span class="val" id="speedV"></span></div>
   <label for="size">Tamaño de letra</label>
   <div class="row"><input id="size" type="range" min="22" max="64" step="2"><span class="val" id="sizeV"></span></div>
+  <label for="quality">Calidad de video</label>
+  <select id="quality">
+    <option value="720">HD · 720p</option>
+    <option value="1080">Full HD · 1080p</option>
+    <option value="2160">4K · 2160p (si tu cámara lo permite)</option>
+  </select>
+  <label for="fps">Fotogramas por segundo</label>
+  <select id="fps">
+    <option value="30">30 fps</option>
+    <option value="60">60 fps (si tu cámara lo permite)</option>
+  </select>
   <button class="primary" id="open">Abrir cámara</button>
   <div class="msg" id="err" hidden></div>
 </main>
@@ -106,6 +122,12 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
   $('script').addEventListener('input',function(){store.set('tp-script',this.value)});
   $('speed').addEventListener('input',function(){speed=+this.value;store.set('tp-speed',speed);labels()});
   $('size').addEventListener('input',function(){size=+this.value;store.set('tp-size',size);labels()});
+  var QUAL={'720':{w:1280,h:720,b:5000000},'1080':{w:1920,h:1080,b:10000000},'2160':{w:3840,h:2160,b:35000000}};
+  var info='';
+  $('quality').value=store.get('tp-quality')||'720';
+  $('fps').value=store.get('tp-fps')||'30';
+  $('quality').addEventListener('change',function(){store.set('tp-quality',this.value)});
+  $('fps').addEventListener('change',function(){store.set('tp-fps',this.value)});
 
   function show(which){ ['setup','stage','result'].forEach(function(n){ $(n).hidden = n!==which; }); }
   function sleep(ms){ return new Promise(function(r){setTimeout(r,ms)}); }
@@ -119,7 +141,11 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
     $('err').hidden=true;
     if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ showErr('Este navegador no permite usar la cámara. Abre el enlace en Chrome.'); return; }
     try{
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}},audio:{echoCancellation:true,noiseSuppression:true}});
+      var q=QUAL[$('quality').value]||QUAL['720'], f=+$('fps').value||30;
+      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:q.w},height:{ideal:q.h},frameRate:{ideal:f}},audio:{echoCancellation:true,noiseSuppression:true}});
+      var vs=stream.getVideoTracks()[0].getSettings();
+      var lo=Math.min(vs.width||0,vs.height||0), hi=Math.max(vs.width||0,vs.height||0);
+      info=(lo&&hi?hi+'×'+lo:'')+(vs.frameRate?' · '+Math.round(vs.frameRate)+' fps':'');
     }catch(e){
       var n=e&&e.name;
       showErr(n==='NotAllowedError'?'Falta el permiso de cámara y micrófono. Actívalo en los ajustes del sitio de Chrome y vuelve a intentar.':n==='NotFoundError'?'No se encontró cámara o micrófono.':'No se pudo abrir la cámara: '+(e&&e.message||n));
@@ -129,7 +155,7 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
     $('text').textContent=$('script').value;
     $('text').style.fontSize=size+'px';
     pos=0; $('reader').scrollTop=0; setPlaying(false);
-    show('stage'); keepAwake();
+    show('stage'); keepAwake(); if(info) flash(info);
   });
 
   function setPlaying(p){ playing=p; $('play').textContent=p?'Pausa':'Play'; }
@@ -168,7 +194,8 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
     c.hidden=true;
     var types=['video/mp4;codecs=avc1,mp4a.40.2','video/mp4','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
     mime=''; if(window.MediaRecorder){ for(var i=0;i<types.length;i++){ if(MediaRecorder.isTypeSupported(types[i])){ mime=types[i]; break; } } }
-    try{ rec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined); }
+    var ro={videoBitsPerSecond:(QUAL[$('quality').value]||QUAL['720']).b}; if(mime) ro.mimeType=mime;
+    try{ rec=new MediaRecorder(stream, ro); }
     catch(e){ busy=false; $('status').textContent='Este navegador no puede grabar video.'; $('status').hidden=false; return; }
     chunks=[]; rec.ondataavailable=function(e){ if(e.data&&e.data.size) chunks.push(e.data); };
     rec.onstop=finish;
@@ -187,7 +214,7 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
     if(url) URL.revokeObjectURL(url);
     url=URL.createObjectURL(blob);
     $('preview').src=url;
-    $('resInfo').textContent='Duración '+fmt(Math.floor((Date.now()-t0)/1000))+' · '+(blob.size/1048576).toFixed(1)+' MB · formato '+ext.toUpperCase();
+    $('resInfo').textContent='Duración '+fmt(Math.floor((Date.now()-t0)/1000))+' · '+(blob.size/1048576).toFixed(1)+' MB · '+(info?info+' · ':'')+ext.toUpperCase();
     $('saveMsg').hidden=true;
     setPlaying(false); stopStream(); release(); show('result');
   }
@@ -205,6 +232,8 @@ textarea:focus-visible,button:focus-visible,input:focus-visible{outline:3px soli
   });
 
   $('again').addEventListener('click',function(){ $('preview').removeAttribute('src'); show('setup'); });
+
+  if('serviceWorker' in navigator){ window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); }); }
 })();
 </script>
 </body>
