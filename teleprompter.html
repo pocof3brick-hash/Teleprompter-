@@ -66,6 +66,8 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
   <div class="row"><input id="speed" type="range" min="10" max="200" step="5"><span class="val" id="speedV"></span></div>
   <label for="size">Tamaño de letra</label>
   <div class="row"><input id="size" type="range" min="22" max="64" step="2"><span class="val" id="sizeV"></span></div>
+  <label for="stripH">Altura de la franja de texto</label>
+  <div class="row"><input id="stripH" type="range" min="20" max="60" step="2"><span class="val" id="stripHV"></span></div>
   <label for="quality">Calidad de video</label>
   <select id="quality">
     <option value="720">HD · 720p</option>
@@ -112,18 +114,19 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
   var $=function(id){return document.getElementById(id)};
   var store={get:function(k){try{return localStorage.getItem(k)}catch(e){return null}},set:function(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
   var DEFAULT='Hola, bienvenidos. Este es un texto de prueba para ver cómo se mueve el guion.\n\nPuedes pegar aquí el texto que quieras leer. Mientras hablas, el texto sube solo, a la velocidad que elijas.\n\nMantén la mirada cerca del lente y respira con calma. ¡Listo para grabar!';
-  var speed=+(store.get('tp-speed')||45), size=+(store.get('tp-size')||34);
-  var stream=null, rec=null, chunks=[], mime='', playing=false, pos=0, last=0, timer=null, t0=0, url=null, blob=null, ext='webm', wake=null, busy=false;
+  var speed=+(store.get('tp-speed')||45), size=+(store.get('tp-size')||34), stripH=+(store.get('tp-strip')||38);
+  var stream=null, rec=null, chunks=[], mime='', playing=false, pos=0, last=0, timer=null, t0=0, url=null, blob=null, ext='webm', wake=null, busy=false, pt=0, dur=0, wasPlaying=false;
 
   $('script').value=store.get('tp-script')||DEFAULT;
-  $('speed').value=speed; $('size').value=size;
-  function labels(){ $('speedV').textContent=speed; $('sizeV').textContent=size+' px'; }
+  $('speed').value=speed; $('size').value=size; $('stripH').value=stripH;
+  function labels(){ $('speedV').textContent=speed; $('sizeV').textContent=size+' px'; $('stripHV').textContent=stripH+'%'; }
   labels();
   $('script').addEventListener('input',function(){store.set('tp-script',this.value)});
   $('speed').addEventListener('input',function(){speed=+this.value;store.set('tp-speed',speed);labels()});
   $('size').addEventListener('input',function(){size=+this.value;store.set('tp-size',size);labels()});
   var QUAL={'720':{w:1280,h:720,b:5000000},'1080':{w:1920,h:1080,b:10000000},'2160':{w:3840,h:2160,b:35000000}};
   var info='';
+  $('stripH').addEventListener('input',function(){stripH=+this.value;store.set('tp-strip',stripH);labels()});
   $('quality').value=store.get('tp-quality')||'720';
   $('fps').value=store.get('tp-fps')||'30';
   $('quality').addEventListener('change',function(){store.set('tp-quality',this.value)});
@@ -153,7 +156,7 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
     }
     $('cam').srcObject=stream;
     $('text').textContent=$('script').value;
-    $('text').style.fontSize=size+'px';
+    $('text').style.fontSize=size+'px'; $('strip').style.height=stripH+'%';
     pos=0; $('reader').scrollTop=0; setPlaying(false);
     show('stage'); keepAwake(); if(info) flash(info);
   });
@@ -173,20 +176,31 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
 
   $('strip').addEventListener('click',function(){ setPlaying(!playing); });
   $('play').addEventListener('click',function(){ setPlaying(!playing); });
-  function flash(m){ var s=$('status'); if(rec&&rec.state==='recording')return; s.textContent=m; s.hidden=false; clearTimeout(flash.t); flash.t=setTimeout(function(){ if(!(rec&&rec.state==='recording')) s.hidden=true; },1200); }
+  function flash(m){ var s=$('status'); if(rec&&rec.state!=='inactive')return; s.textContent=m; s.hidden=false; clearTimeout(flash.t); flash.t=setTimeout(function(){ if(!(rec&&rec.state!=='inactive')) s.hidden=true; },1200); }
   $('slower').addEventListener('click',function(){ speed=Math.max(10,speed-10); $('speed').value=speed; store.set('tp-speed',speed); labels(); flash('Velocidad '+speed); });
   $('faster').addEventListener('click',function(){ speed=Math.min(200,speed+10); $('speed').value=speed; store.set('tp-speed',speed); labels(); flash('Velocidad '+speed); });
 
   $('back').addEventListener('click',function(){
-    if(rec&&rec.state==='recording') return;
+    if(rec&&rec.state==='recording'){
+      wasPlaying=playing; rec.pause(); pt=Date.now(); setPlaying(false);
+      this.textContent='Seguir'; this.setAttribute('aria-label','Reanudar grabación');
+      $('status').innerHTML='<span class="dot" style="background:#ffb84d"></span>En pausa '+fmt(elapsed());
+      return;
+    }
+    if(rec&&rec.state==='paused'){
+      t0+=Date.now()-pt; rec.resume(); setPlaying(wasPlaying);
+      this.textContent='Pausa'; this.setAttribute('aria-label','Pausar grabación');
+      return;
+    }
     setPlaying(false); stopStream(); release(); show('setup');
   });
 
   function fmt(s){ var m=Math.floor(s/60), r=s%60; return (m<10?'0':'')+m+':'+(r<10?'0':'')+r; }
+  function elapsed(){ var end=(rec&&rec.state==='paused')?pt:Date.now(); return Math.floor((end-t0)/1000); }
 
   $('rec').addEventListener('click', async function(){
     if(busy) return;
-    if(rec&&rec.state==='recording'){ rec.stop(); return; }
+    if(rec&&(rec.state==='recording'||rec.state==='paused')){ dur=elapsed(); rec.stop(); return; }
     busy=true;
     setPlaying(false); pos=0; $('reader').scrollTop=0;
     var c=$('count'); c.hidden=false;
@@ -202,19 +216,19 @@ select{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);b
     rec.start(1000);
     $('rec').classList.add('on'); $('rec').setAttribute('aria-label','Detener grabación');
     t0=Date.now(); var s=$('status'); s.hidden=false;
-    timer=setInterval(function(){ s.innerHTML='<span class="dot"></span>'+fmt(Math.floor((Date.now()-t0)/1000)); },250);
+    timer=setInterval(function(){ if(rec.state==='recording') s.innerHTML='<span class="dot"></span>'+fmt(elapsed()); },250);
     s.innerHTML='<span class="dot"></span>00:00';
-    setPlaying(true); busy=false;
+    setPlaying(true); busy=false; $('back').textContent='Pausa'; $('back').setAttribute('aria-label','Pausar grabación');
   });
 
   function finish(){
-    clearInterval(timer); $('rec').classList.remove('on'); $('rec').setAttribute('aria-label','Grabar'); $('status').hidden=true;
+    clearInterval(timer); $('back').textContent='Editar'; $('back').setAttribute('aria-label','Volver a editar el guion'); $('rec').classList.remove('on'); $('rec').setAttribute('aria-label','Grabar'); $('status').hidden=true;
     var type=(rec&&rec.mimeType)||mime||'video/webm';
     blob=new Blob(chunks,{type:type}); ext=type.indexOf('mp4')>-1?'mp4':'webm';
     if(url) URL.revokeObjectURL(url);
     url=URL.createObjectURL(blob);
     $('preview').src=url;
-    $('resInfo').textContent='Duración '+fmt(Math.floor((Date.now()-t0)/1000))+' · '+(blob.size/1048576).toFixed(1)+' MB · '+(info?info+' · ':'')+ext.toUpperCase();
+    $('resInfo').textContent='Duración '+fmt(dur)+' · '+(blob.size/1048576).toFixed(1)+' MB · '+(info?info+' · ':'')+ext.toUpperCase();
     $('saveMsg').hidden=true;
     setPlaying(false); stopStream(); release(); show('result');
   }
